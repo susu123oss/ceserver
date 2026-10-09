@@ -1,0 +1,8 @@
+Package: com.0xiuks.ceserver
+Name: ceserver
+Version: 1.1.0
+Architecture: iphoneos-arm64
+Description: Cheat Engine network server for jailbroken iOS
+Maintainer: 0xiuks
+Author: xiu
+Section: System

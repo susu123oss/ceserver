@@ -1,0 +1,7 @@
+.theos/
+packages/
+*.deb
+*.o
+.DS_Store
+duck.svg
+pelican.html
