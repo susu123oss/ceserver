@@ -55,7 +55,7 @@ int CreateHandleFromPointer(void *p, handleType type)
   }
 
   debug_log("Reached max amount of handles (%d). Expanding handle list.\n", HandleList_max);
-  if (HandleList_max > 0x3fffffff)
+  if (HandleList_max >= 1048576 || HandleList_max <= 0)
   {
     pthread_mutex_unlock(&handle_mutex);
     return 0;

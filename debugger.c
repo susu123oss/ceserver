@@ -389,7 +389,10 @@ static kern_return_t handle_exception_raise(DebuggerData *dbg, __Request__except
   mach_port_deallocate(mach_task_self(), req->task.name);
 
   if (!enqueue_pending_exception(dbg, req->thread.name, req->Head.msgh_remote_port, req->Head.msgh_id))
+  {
     debug_log("Failed to queue pending exception for thread %u\n", req->thread.name);
+    mach_port_deallocate(mach_task_self(), req->Head.msgh_remote_port);
+  }
 
   int signo = SIGTRAP;
   switch (req->exception)
@@ -1250,7 +1253,17 @@ static int reply_pending_exception(DebuggerData *dbg, thread_t thread, kern_retu
     r.Head.msgh_id = cur->msg_id + 100;
     r.NDR = NDR_record;
     r.RetCode = retcode;
-    mach_msg(&r.Head, MACH_SEND_MSG, r.Head.msgh_size, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    mach_msg_return_t mr = mach_msg(&r.Head, MACH_SEND_MSG, r.Head.msgh_size, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    if (mr != MACH_MSG_SUCCESS)
+    {
+      debug_log("reply_pending_exception: mach_msg failed with 0x%x\n", mr);
+      if (cur->reply_port != MACH_PORT_NULL)
+        mach_port_deallocate(mach_task_self(), cur->reply_port);
+    }
+  }
+  else if (cur->reply_port != MACH_PORT_NULL)
+  {
+    mach_port_deallocate(mach_task_self(), cur->reply_port);
   }
 
   free(cur);

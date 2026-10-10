@@ -1338,41 +1338,47 @@ void CloseHandle(HANDLE h)
   if (ht == htTHSProcess)
   {
     PProcessList pl = (PProcessList)GetPointerFromHandle(h);
+    if (!pl)
+      return;
     pl->ReferenceCount--;
     if (pl->ReferenceCount <= 0)
     {
+      RemoveHandle(h);
       for (int i = 0; i < pl->processCount; i++)
         free(pl->processList[i].ProcessName);
       free(pl->processList);
       free(pl);
-      RemoveHandle(h);
     }
   }
   else if (ht == htTHSModule)
   {
     PModuleList ml = (PModuleList)GetPointerFromHandle(h);
+    if (!ml)
+      return;
     ml->ReferenceCount--;
     if (ml->ReferenceCount <= 0)
     {
+      RemoveHandle(h);
       for (int i = 0; i < ml->moduleCount; i++)
         free(ml->moduleList[i].moduleName);
       free(ml->moduleList);
       free(ml);
-      RemoveHandle(h);
     }
   }
   else if (ht == htProcesHandle)
   {
     PProcessData pd = (PProcessData)GetPointerFromHandle(h);
+    if (!pd)
+      return;
     pd->ReferenceCount--;
     if (pd->ReferenceCount <= 0)
     {
+      RemoveHandle(h);
       if (pd->debuggerData)
         StopDebug(h);
       if (pd->task != MACH_PORT_NULL)
         mach_port_deallocate(mach_task_self(), pd->task);
       free(pd);
-      RemoveHandle(h);
     }
   }
   else
