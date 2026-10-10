@@ -931,19 +931,31 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
   }
 
   uint64_t cursor = 0;
+  int malformed = 0;
   for (uint32_t i = 0; i < info->ncmds; i++)
   {
     if (cursor + sizeof(struct load_command) > info->sizeofcmds)
+    {
+      malformed = 1;
       break;
+    }
 
     struct load_command *lc = (struct load_command *)&cmds[cursor];
     uint32_t cmd = swap32_if(lc->cmd, info->swap);
     uint32_t cmdsize = swap32_if(lc->cmdsize, info->swap);
     if (cmdsize < sizeof(struct load_command) || cursor + cmdsize > info->sizeofcmds)
+    {
+      malformed = 1;
       break;
+    }
 
     if (cmd == LC_SEGMENT_64 && info->is64)
     {
+      if (cmdsize < sizeof(struct segment_command_64))
+      {
+        malformed = 1;
+        break;
+      }
       struct segment_command_64 seg;
       memcpy(&seg, lc, sizeof(seg));
       seg.vmaddr = swap64_if(seg.vmaddr, info->swap);
@@ -984,6 +996,11 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
     }
     else if (cmd == LC_SEGMENT && !info->is64)
     {
+      if (cmdsize < sizeof(struct segment_command))
+      {
+        malformed = 1;
+        break;
+      }
       struct segment_command seg;
       memcpy(&seg, lc, sizeof(seg));
       seg.vmaddr = swap32_if(seg.vmaddr, info->swap);
@@ -1024,6 +1041,11 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
     }
     else if (cmd == LC_SYMTAB)
     {
+      if (cmdsize < sizeof(struct symtab_command))
+      {
+        malformed = 1;
+        break;
+      }
       struct symtab_command st;
       memcpy(&st, lc, sizeof(st));
       st.cmd = cmd;
@@ -1036,6 +1058,11 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
     }
     else if (cmd == LC_DYSYMTAB)
     {
+      if (cmdsize < sizeof(struct dysymtab_command))
+      {
+        malformed = 1;
+        break;
+      }
       struct dysymtab_command dt;
       memcpy(&dt, lc, sizeof(dt));
       dt.cmd = cmd;
@@ -1062,6 +1089,11 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
     }
     else if (cmd == LC_DYLD_INFO || cmd == LC_DYLD_INFO_ONLY)
     {
+      if (cmdsize < sizeof(struct dyld_info_command))
+      {
+        malformed = 1;
+        break;
+      }
       struct dyld_info_command di;
       memcpy(&di, lc, sizeof(di));
       di.cmd = cmd;
@@ -1072,6 +1104,11 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
     }
     else if (cmd == LC_DYLD_EXPORTS_TRIE)
     {
+      if (cmdsize < sizeof(struct linkedit_data_command))
+      {
+        malformed = 1;
+        break;
+      }
       struct linkedit_data_command le;
       memcpy(&le, lc, sizeof(le));
       le.cmd = cmd;
@@ -1082,6 +1119,11 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
     }
     else if (cmd == LC_FUNCTION_STARTS)
     {
+      if (cmdsize < sizeof(struct linkedit_data_command))
+      {
+        malformed = 1;
+        break;
+      }
       struct linkedit_data_command le;
       memcpy(&le, lc, sizeof(le));
       le.cmd = cmd;
@@ -1095,7 +1137,12 @@ static int parse_macho_header(int fd, uint32_t fileoffset, MachOInfo *info)
   }
 
   free(cmds);
-  return info->symtab.cmd == LC_SYMTAB;
+  if (malformed || info->symtab.cmd != LC_SYMTAB)
+  {
+    section_list_free(&info->sections);
+    return 0;
+  }
+  return 1;
 }
 
 static int read_symtab_data(int fd, uint32_t fileoffset, const MachOInfo *info,
@@ -1177,6 +1224,8 @@ static int get_nlist_entry(const unsigned char *symtab, size_t nsyms, size_t ind
 static const char *get_symbol_name(const unsigned char *strtab, size_t strtab_size, uint32_t strx)
 {
   if (!strtab || strx >= strtab_size)
+    return NULL;
+  if (!memchr(&strtab[strx], '\0', strtab_size - strx))
     return NULL;
   return (const char *)&strtab[strx];
 }

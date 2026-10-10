@@ -203,7 +203,7 @@ static int dyld_image_list_append(DyldImageList *list, uint64_t load_address, co
 
   DyldImageInfo *entry = &list->items[list->count++];
   entry->load_address = load_address;
-  entry->path = strdup(path);
+  entry->path = strdup(path ? path : "");
   if (!entry->path)
     return 0;
   return 1;
@@ -806,10 +806,6 @@ int ChangeMemoryProtection(HANDLE hProcess, uint64_t address, uint32_t size, uin
 
 
 
-  // On iOS, setting RWX can drop execute due to W^X. Treat as success.
-  if (windowsprotection == PAGE_EXECUTE_READWRITE)
-    return 1;
-
   PProcessData p = (PProcessData)GetPointerFromHandle(hProcess);
   uint32_t vmprot = windows_protection_to_vmprot(windowsprotection);
 
@@ -822,6 +818,10 @@ int ChangeMemoryProtection(HANDLE hProcess, uint64_t address, uint32_t size, uin
     if (VirtualQueryEx(hProcess, (void *)(uintptr_t)address, &ri, NULL))
       *oldprotection = ri.protection;
   }
+
+  // On iOS, setting RWX can drop execute due to W^X. Treat as success after filling oldprotection.
+  if (windowsprotection == PAGE_EXECUTE_READWRITE)
+    return 1;
 
   uint64_t ps = get_page_size();
   if (ps == 0 || (ps & (ps - 1)) != 0)
@@ -875,6 +875,11 @@ int WriteProcessMemory(HANDLE hProcess, void *lpAddress, void *buffer, int size)
   if ((unsigned long)size > UINT32_MAX)
     return 0;
 
+  uint64_t start = (uint64_t)(uintptr_t)lpAddress;
+  if (UINT64_MAX - start < (uint64_t)size)
+    return 0;
+  uint64_t end = start + (uint64_t)size;
+
   PProcessData p = (PProcessData)GetPointerFromHandle(hProcess);
   mach_port_t task = p->task;
 
@@ -889,13 +894,9 @@ int WriteProcessMemory(HANDLE hProcess, void *lpAddress, void *buffer, int size)
   if (ps == 0 || (ps & (ps - 1)) != 0)
     return 0;
 
-  uint64_t start = (uint64_t)(uintptr_t)lpAddress;
-  uint64_t end;
-  if (UINT64_MAX - start < (uint64_t)size)
-    return 0;
-  end = start + (uint64_t)size;
-
   uint64_t page_start = start & ~(ps - 1);
+  if (UINT64_MAX - (ps - 1) < end)
+    return 0;
   uint64_t page_end = (end + (ps - 1)) & ~(ps - 1);
   uint64_t page_count = (page_end - page_start) / ps;
 

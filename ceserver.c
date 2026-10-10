@@ -393,7 +393,9 @@ int DispatchCommand(int currentsocket, unsigned char command)
 
       debug_log("CMD_GETTHREADCONTEXT:\n");
 
-      recvall(currentsocket, &gtc, sizeof(gtc), MSG_WAITALL);
+      memset(&gtc, 0, sizeof(gtc));
+      if (recvall(currentsocket, &gtc, sizeof(gtc), MSG_WAITALL) <= 0)
+        return 0;
 
       debug_log("Going to call GetThreadContext(%d, %d, %p)\n", gtc.hProcess, gtc.tid, &Context);
       memset(&Context, 0, sizeof(Context));
@@ -406,6 +408,8 @@ int DispatchCommand(int currentsocket, unsigned char command)
       {
         debug_log("Context.structsize=%d\n", Context.structsize);
         uint32_t structsize = Context.structsize;
+        if (structsize > sizeof(Context))
+          structsize = sizeof(Context);
         sendall(currentsocket, &result, sizeof(result), MSG_MORE);
         sendall(currentsocket, &structsize, sizeof(structsize), MSG_MORE);
         sendall(currentsocket, &Context, structsize, 0);
@@ -435,7 +439,7 @@ int DispatchCommand(int currentsocket, unsigned char command)
       debug_log("CMD_SETTHREADCONTEXT:\n");
 
       if (recvall(currentsocket, &stc, sizeof(stc), MSG_WAITALL) <= 0)
-        break;
+        return 0;
       debug_log("hProcess=%d tid=%d structsize=%d\n", stc.hProcess, stc.tid, stc.structsize);
 
       if (stc.structsize < sizeof(CONTEXT) || stc.structsize > MAX_CONTEXT_SIZE)
@@ -566,6 +570,9 @@ int DispatchCommand(int currentsocket, unsigned char command)
             do
             {
               int namelen = (int)strlen(me.moduleName);
+              if (namelen > 65536 - (int)sizeof(CeModuleEntry))
+                namelen = 65536 - (int)sizeof(CeModuleEntry);
+
               if ((pos + (int)sizeof(CeModuleEntry) + namelen) > 65536)
               {
                 sendall(currentsocket, outputstream, (size_t)pos, 0);

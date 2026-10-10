@@ -1037,22 +1037,22 @@ static int apply_watchpoint_state_transaction(DebuggerData *dbg, thread_t *threa
   free(snapshots);
   return ok && applied > 0;
 }
-static void fill_context_from_thread(thread_t thread, PCONTEXT Context)
+static int fill_context_from_thread(thread_t thread, PCONTEXT Context)
 {
   arm_thread_state64_t gpr;
   mach_msg_type_number_t gpr_count = ARM_THREAD_STATE64_COUNT;
   memset(Context, 0, sizeof(*Context));
 
-  if (thread_get_state(thread, ARM_THREAD_STATE64, (thread_state_t)&gpr, &gpr_count) == KERN_SUCCESS)
-  {
-    for (int i = 0; i < 29; i++)
-      Context->regs.regs[i] = gpr.__x[i];
-    Context->regs.regs[29] = gpr.__fp;
-    Context->regs.regs[30] = gpr.__lr;
-    Context->regs.sp = gpr.__sp;
-    Context->regs.pc = gpr.__pc;
-    Context->regs.pstate = gpr.__cpsr;
-  }
+  if (thread_get_state(thread, ARM_THREAD_STATE64, (thread_state_t)&gpr, &gpr_count) != KERN_SUCCESS)
+    return 0;
+
+  for (int i = 0; i < 29; i++)
+    Context->regs.regs[i] = gpr.__x[i];
+  Context->regs.regs[29] = gpr.__fp;
+  Context->regs.regs[30] = gpr.__lr;
+  Context->regs.sp = gpr.__sp;
+  Context->regs.pc = gpr.__pc;
+  Context->regs.pstate = gpr.__cpsr;
 
   arm_neon_state64_t neon;
   mach_msg_type_number_t neon_count = ARM_NEON_STATE64_COUNT;
@@ -1065,6 +1065,7 @@ static void fill_context_from_thread(thread_t thread, PCONTEXT Context)
 
   Context->structsize = sizeof(CONTEXT);
   Context->type = 3;
+  return 1;
 }
 
 static int apply_breakpoint_state(thread_t thread, int debugreg, uint64_t address, int size, int enable, kern_return_t *out_err)
@@ -1745,23 +1746,23 @@ int StartDebug(HANDLE hProcess)
   kern_return_t kr = task_get_exception_ports(p->task, dbg->exception_mask, dbg->saved_masks, &dbg->saved_count,
                                               dbg->saved_ports, dbg->saved_behaviors, dbg->saved_flavors);
   if (kr != KERN_SUCCESS)
+  {
     debug_log("task_get_exception_ports failed: %d\n", kr);
+    dbg->saved_count = 0;
+  }
 
   kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &dbg->exception_port);
   if (kr != KERN_SUCCESS)
   {
     debug_log("mach_port_allocate failed: %d\n", kr);
-    free(dbg);
-    return FALSE;
+    goto fail_cleanup;
   }
 
   kr = mach_port_insert_right(mach_task_self(), dbg->exception_port, dbg->exception_port, MACH_MSG_TYPE_MAKE_SEND);
   if (kr != KERN_SUCCESS)
   {
     debug_log("mach_port_insert_right failed: %d\n", kr);
-    mach_port_deallocate(mach_task_self(), dbg->exception_port);
-    free(dbg);
-    return FALSE;
+    goto fail_cleanup;
   }
 
   kr = task_set_exception_ports(p->task, dbg->exception_mask, dbg->exception_port,
@@ -1769,9 +1770,7 @@ int StartDebug(HANDLE hProcess)
   if (kr != KERN_SUCCESS)
   {
     debug_log("task_set_exception_ports failed: %d\n", kr);
-    mach_port_deallocate(mach_task_self(), dbg->exception_port);
-    free(dbg);
-    return FALSE;
+    goto fail_cleanup;
   }
 
   dbg->exception_thread_running = 1;
@@ -1827,6 +1826,24 @@ int StartDebug(HANDLE hProcess)
 
   debug_log("StartDebug(%d) ok\n", hProcess);
   return TRUE;
+
+fail_cleanup:
+  if (dbg->exception_port != MACH_PORT_NULL)
+    mach_port_destroy(mach_task_self(), dbg->exception_port);
+  if (dbg->saved_count > 0)
+  {
+    for (mach_msg_type_number_t i = 0; i < dbg->saved_count; i++)
+    {
+      if (MACH_PORT_VALID(dbg->saved_ports[i]))
+        mach_port_deallocate(mach_task_self(), dbg->saved_ports[i]);
+    }
+    dbg->saved_count = 0;
+  }
+  pthread_mutex_destroy(&dbg->queue_mutex);
+  pthread_cond_destroy(&dbg->queue_cond);
+  pthread_mutex_destroy(&dbg->breakpoint_mutex);
+  free(dbg);
+  return FALSE;
 }
 
 int StopDebug(HANDLE hProcess)
@@ -1857,9 +1874,15 @@ int StopDebug(HANDLE hProcess)
   {
     for (mach_msg_type_number_t i = 0; i < dbg->saved_count; i++)
     {
-      task_set_exception_ports(p->task, dbg->saved_masks[i], dbg->saved_ports[i],
-                               dbg->saved_behaviors[i], dbg->saved_flavors[i]);
+      if (MACH_PORT_VALID(dbg->saved_ports[i]))
+      {
+        task_set_exception_ports(p->task, dbg->saved_masks[i], dbg->saved_ports[i],
+                                 dbg->saved_behaviors[i], dbg->saved_flavors[i]);
+        mach_port_deallocate(mach_task_self(), dbg->saved_ports[i]);
+        dbg->saved_ports[i] = MACH_PORT_NULL;
+      }
     }
+    dbg->saved_count = 0;
   }
 
   pthread_mutex_lock(&g_debugger_lock);
@@ -2340,8 +2363,7 @@ BOOL GetThreadContext(HANDLE hProcess, int tid, PCONTEXT Context)
   if (thread == MACH_PORT_NULL)
     return FALSE;
 
-  fill_context_from_thread(thread, Context);
-  return TRUE;
+  return fill_context_from_thread(thread, Context) ? TRUE : FALSE;
 }
 
 BOOL SetThreadContext(HANDLE hProcess, int tid, PCONTEXT Context)
