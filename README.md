@@ -24,6 +24,8 @@
 - **优雅退出与常驻守护**：
   - 采用 **Self-Pipe Trick** 监听 `SIGTERM`/`SIGINT`，保证服务停止或重启时主动释放监听套接字，杜绝 `Address already in use` 端口泄漏。
   - 忽略 `SIGPIPE`，防止客户端异常断开导致服务端崩溃。
+- **跨越狱环境兼容**：
+  - 兼容现代 Rootless 越狱（Dopamine / Palera1n）及标准 Rootful 越狱环境，支持无沙盒权限提权运行与 `task_for_pid` 调试。
 
 ---
 
@@ -99,6 +101,11 @@ dpkg -i packages/com.0xiuks.ceserver_1.1.0_iphoneos-arm64.deb
 - **LaunchDaemon 后台常驻**：
   - 配置文件：`/Library/LaunchDaemons/com.0xiuks.ceserver.plist`
   - 运行日志输出至 `/var/log/ceserver.log`。
+  - 加载/重载命令：
+    ```bash
+    launchctl load -w /Library/LaunchDaemons/com.0xiuks.ceserver.plist
+    launchctl unload /Library/LaunchDaemons/com.0xiuks.ceserver.plist
+    ```
 
 ---
 
